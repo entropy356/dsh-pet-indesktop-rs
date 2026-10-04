@@ -11,6 +11,10 @@ keywords = ["desktop-pet", "desktop", "pet", "winit"]
 # 第一阶段（骨架）保持零依赖，保证任何环境开箱即编译。
 # 后续按路线图引入：winit / softbuffer / tray-icon / serde+toml / symphonia 等，见 README。
 
+[dev-dependencies]
+# 属性测试（仅测试期依赖，不进入运行时依赖图，见 issue #1 验收标准）
+proptest = "1"
+
 [profile.release]
 lto = true
 strip = true
