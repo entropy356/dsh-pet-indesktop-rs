@@ -1,0 +1,16 @@
+[package]
+name = "dsh-pet-indesktop-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Rust 重构版桌面宠物（原项目 MerZlin/dsh-pet-indesktop），蓝色大肥鱼跨 Windows/Linux/macOS"
+license = "MIT"
+repository = "https://github.com/entropy356/dsh-pet-indesktop-rs"
+keywords = ["desktop-pet", "desktop", "pet", "winit"]
+
+[dependencies]
+# 第一阶段（骨架）保持零依赖，保证任何环境开箱即编译。
+# 后续按路线图引入：winit / softbuffer / tray-icon / serde+toml / symphonia 等，见 README。
+
+[profile.release]
+lto = true
+strip = true
