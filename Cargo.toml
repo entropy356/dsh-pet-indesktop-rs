@@ -8,8 +8,10 @@ repository = "https://github.com/entropy356/dsh-pet-indesktop-rs"
 keywords = ["desktop-pet", "desktop", "pet", "winit"]
 
 [dependencies]
-# 第一阶段（骨架）保持零依赖，保证任何环境开箱即编译。
-# 后续按路线图引入：winit / softbuffer / tray-icon / serde+toml / symphonia 等，见 README。
+# 配置层（issue #3）：serde + serde_json，JSON 与原项目 config.json 兼容。
+# toml 迁移另议，见仓库 README 技术选型。
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [dev-dependencies]
 # 属性测试（仅测试期依赖，不进入运行时依赖图，见 issue #1 验收标准）
