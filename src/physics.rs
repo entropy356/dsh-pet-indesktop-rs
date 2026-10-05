@@ -107,7 +107,8 @@ impl Default for PhysicsParams {
 /// 钳制 dt 到 `(0, MAX_DT]`。NaN / 负值 / 0 返回 0（调用方据此可跳过本帧），
 /// 超上限返回 `MAX_DT`。
 pub fn clamp_dt(dt: f32) -> f32 {
-    if !(dt > 0.0) {
+    // partial_cmp：NaN 与 0/负值统一走 0 分支（NaN 时比较结果为 None）。
+    if dt.partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater) {
         return 0.0;
     }
     dt.min(MAX_DT)
@@ -254,7 +255,8 @@ pub fn throw_velocity(velocity: Vec2, max_throw_speed: f32) -> Vec2 {
 
 /// 把反弹系数钳到 `[0, 1]`。NaN 视为 0（不反弹）。
 fn clamp_unit(v: f32) -> f32 {
-    if !(v > 0.0) {
+    // partial_cmp：NaN 视为 0（不反弹）。
+    if v.partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater) {
         return 0.0;
     }
     v.min(1.0)
