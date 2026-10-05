@@ -51,7 +51,12 @@ pub struct PetWindow {
 impl PetWindow {
     /// 创建窗口（初始 Hidden，由调用方显式 `show` 唤出）。
     pub fn new(config: PetWindowConfig, backend: Box<dyn WindowBackend>) -> Self {
-        Self { config, state: WindowState::Hidden, position: (0, 0), backend }
+        Self {
+            config,
+            state: WindowState::Hidden,
+            position: (0, 0),
+            backend,
+        }
     }
 
     // ---- 只读访问器（私有面冻结，外部唯一入口） ----
@@ -214,7 +219,10 @@ mod tests {
         let (mut w, mock) = window();
         assert_eq!(
             w.press(),
-            Err(TransitionError { from: WindowState::Hidden, event: WindowEvent::Press })
+            Err(TransitionError {
+                from: WindowState::Hidden,
+                event: WindowEvent::Press
+            })
         );
         assert_eq!(w.state(), WindowState::Hidden);
         assert!(mock.calls().is_empty());

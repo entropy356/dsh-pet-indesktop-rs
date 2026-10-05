@@ -1,17 +1,6 @@
-//! dsh-pet-indesktop-rs
+//! dsh-pet-indesktop-rs —— 二进制入口（骨架阶段仅打印模块划分）。
 //!
-//! Rust 重构版桌面宠物（原项目：https://github.com/MerZlin/dsh-pet-indesktop）。
-//! 目标：透明无边框、置顶、可拖动的桌宠窗口，支持角色切换、动画播放、
-//! 系统托盘、多开与可选 AI 对话能力，覆盖 Windows / Linux / macOS。
-//!
-//! 当前处于第一阶段（骨架）：模块划分与接口占位已就绪，零依赖可编译。
-//! 路线图见 README.md。
-
-mod animation;
-mod config;
-mod physics;
-mod tray;
-mod window;
+//! 模块实现见 `src/lib.rs`；各阶段功能在此逐段接入。
 
 fn main() {
     println!("dsh-pet-indesktop-rs v{}", env!("CARGO_PKG_VERSION"));
@@ -33,8 +22,10 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    /// 骨架自检：版本号元信息非空（编译期元数据存在性）。
     #[test]
-    fn skeleton_compiles() {
-        assert!(true);
+    fn skeleton_metadata_present() {
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(!version.is_empty());
     }
 }

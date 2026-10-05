@@ -3,6 +3,7 @@
 <p align="center">
   <img alt="语言" src="https://img.shields.io/badge/语言-Rust-DEA584">
   <img alt="平台" src="https://img.shields.io/badge/平台-Windows%20%7C%20macOS%20%7C%20Linux-8A2BE2">
+  <img alt="CI" src="https://github.com/entropy356/dsh-pet-indesktop-rs/actions/workflows/ci.yml/badge.svg">
 </p>
 
 将 [MerZlin/dsh-pet-indesktop](https://github.com/MerZlin/dsh-pet-indesktop)（Python + PySide6 桌面宠物「蓝色大肥鱼」）用 **Rust** 重构的工程。
@@ -41,11 +42,18 @@
 cargo build        # 编译
 cargo test         # 运行单元测试
 cargo run          # 运行（骨架阶段仅打印模块划分）
+cargo clippy --all-targets -- -D warnings   # CI 同款 lint
+cargo fmt --check  # 格式检查
+bash scripts/check-arch.sh                   # 架构红线检查（CI 同款）
 ```
 
 ## 许可证
 
-待定（建议与原项目保持一致，迁移前查阅原仓库 LICENSE）。
+代码：[MIT](LICENSE)（原项目 MerZlin/dsh-pet-indesktop 亦为 MIT，版权行已保留）。
+
+角色动画与声音素材（第二阶段引入）授权见
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)：角色素材为同人作品
+（CC BY-NC-SA 类，**仅限个人非商业使用**，须保留署名与来源）。
 
 ## 致谢
 

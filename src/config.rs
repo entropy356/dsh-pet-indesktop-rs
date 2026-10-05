@@ -172,17 +172,25 @@ fn home_dir() -> Option<PathBuf> {
     if cfg!(target_os = "windows") {
         std::env::var("USERPROFILE").ok().map(PathBuf::from)
     } else {
-        std::env::var("HOME").ok().filter(|v| !v.is_empty()).map(PathBuf::from)
+        std::env::var("HOME")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
     }
 }
 
 /// 加载 slot 配置：文件缺失 → 默认值；存在但解析失败 → 带 reason 的错误。
 pub fn load_or_default(path: &Path) -> Result<SlotConfig, ConfigError> {
     match fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text)
-            .map_err(|e| ConfigError::Parse { path: path.to_path_buf(), reason: e.to_string() }),
+        Ok(text) => serde_json::from_str(&text).map_err(|e| ConfigError::Parse {
+            path: path.to_path_buf(),
+            reason: e.to_string(),
+        }),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(SlotConfig::default()),
-        Err(e) => Err(ConfigError::Io { path: path.to_path_buf(), source: e }),
+        Err(e) => Err(ConfigError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        }),
     }
 }
 
@@ -191,8 +199,10 @@ pub fn load_or_default(path: &Path) -> Result<SlotConfig, ConfigError> {
 pub fn load_or_create_default(path: &Path) -> Result<SlotConfig, ConfigError> {
     if !path.exists() {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| ConfigError::Io { path: parent.to_path_buf(), source: e })?;
+            fs::create_dir_all(parent).map_err(|e| ConfigError::Io {
+                path: parent.to_path_buf(),
+                source: e,
+            })?;
         }
         let default = SlotConfig::default();
         save(path, &default)?;
@@ -203,24 +213,35 @@ pub fn load_or_create_default(path: &Path) -> Result<SlotConfig, ConfigError> {
 
 /// 原子写保存：先写同目录临时文件，再 rename 覆盖目标。
 pub fn save(path: &Path, config: &SlotConfig) -> Result<(), ConfigError> {
-    let text = serde_json::to_string_pretty(config)
-        .map_err(|e| ConfigError::Parse { path: path.to_path_buf(), reason: e.to_string() })?;
+    let text = serde_json::to_string_pretty(config).map_err(|e| ConfigError::Parse {
+        path: path.to_path_buf(),
+        reason: e.to_string(),
+    })?;
 
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let tmp = parent.join(format!(
         ".{}.tmp",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or("config.json")
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("config.json")
     ));
 
     let write = || -> Result<(), ConfigError> {
-        fs::write(&tmp, text.as_bytes())
-            .map_err(|e| ConfigError::Io { path: tmp.clone(), source: e })?;
+        fs::write(&tmp, text.as_bytes()).map_err(|e| ConfigError::Io {
+            path: tmp.clone(),
+            source: e,
+        })?;
         #[cfg(target_os = "windows")]
         if path.exists() {
-            fs::remove_file(path)
-                .map_err(|e| ConfigError::Io { path: path.to_path_buf(), source: e })?;
+            fs::remove_file(path).map_err(|e| ConfigError::Io {
+                path: path.to_path_buf(),
+                source: e,
+            })?;
         }
-        fs::rename(&tmp, path).map_err(|e| ConfigError::Io { path: path.to_path_buf(), source: e })
+        fs::rename(&tmp, path).map_err(|e| ConfigError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        })
     };
 
     let result = write();
@@ -238,12 +259,16 @@ mod tests {
     fn slot_paths() {
         let dir = PathBuf::from("/tmp/x");
         assert_eq!(config_path(&dir, 0), PathBuf::from("/tmp/x/config.json"));
-        assert_eq!(config_path(&dir, 2), PathBuf::from("/tmp/x/config-slot-2.json"));
+        assert_eq!(
+            config_path(&dir, 2),
+            PathBuf::from("/tmp/x/config-slot-2.json")
+        );
     }
 
     #[test]
     fn load_missing_file_returns_default() {
-        let path = std::env::temp_dir().join(format!("dsh-cfg-missing-{}.json", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("dsh-cfg-missing-{}.json", std::process::id()));
         let cfg = load_or_default(&path).expect("缺失文件应返回默认值");
         assert_eq!(cfg, SlotConfig::default());
         assert_eq!(cfg.character, DEFAULT_CHARACTER);
@@ -256,16 +281,23 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let path = config_path(&dir, 3);
 
-        let mut cfg = SlotConfig::default();
-        cfg.character = "big_blue_fat_fish".to_string();
-        cfg.rx = Some(120.0);
-        cfg.ry = Some(240.0);
-        cfg.facing = "right".to_string();
-        cfg.scale = 1.5;
-        cfg.on_top = false;
+        let cfg = SlotConfig {
+            character: "big_blue_fat_fish".to_string(),
+            rx: Some(120.0),
+            ry: Some(240.0),
+            facing: "right".to_string(),
+            scale: 1.5,
+            on_top: false,
+            ..SlotConfig::default()
+        };
 
         save(&path, &cfg).expect("保存应成功");
-        assert!(!path.with_file_name(format!(".{}.tmp", path.file_name().unwrap().to_str().unwrap())).exists());
+        assert!(!path
+            .with_file_name(format!(
+                ".{}.tmp",
+                path.file_name().unwrap().to_str().unwrap()
+            ))
+            .exists());
 
         let loaded = load_or_default(&path).expect("回读应成功");
         assert_eq!(loaded, cfg);
@@ -324,6 +356,9 @@ mod tests {
     #[test]
     fn config_dir_has_app_subdir() {
         let dir = config_dir();
-        assert_eq!(dir.file_name().and_then(|n| n.to_str()), Some("dsh-pet-indesktop-rs"));
+        assert_eq!(
+            dir.file_name().and_then(|n| n.to_str()),
+            Some("dsh-pet-indesktop-rs")
+        );
     }
 }

@@ -55,7 +55,12 @@ mod tests {
     use super::*;
 
     fn screen() -> ScreenRect {
-        ScreenRect { x: 0, y: 0, width: 1920, height: 1080 }
+        ScreenRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        }
     }
 
     #[test]

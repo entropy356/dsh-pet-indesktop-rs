@@ -120,7 +120,10 @@ mod tests {
                 if legal.contains(&(from, event)) {
                     continue;
                 }
-                assert_eq!(transition(from, event), Err(TransitionError { from, event }));
+                assert_eq!(
+                    transition(from, event),
+                    Err(TransitionError { from, event })
+                );
                 illegal += 1;
             }
         }

@@ -107,7 +107,8 @@ impl Default for PhysicsParams {
 /// 钳制 dt 到 `(0, MAX_DT]`。NaN / 负值 / 0 返回 0（调用方据此可跳过本帧），
 /// 超上限返回 `MAX_DT`。
 pub fn clamp_dt(dt: f32) -> f32 {
-    if !(dt > 0.0) {
+    // partial_cmp：NaN 与 0/负值统一走 0 分支（NaN 时比较结果为 None）。
+    if dt.partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater) {
         return 0.0;
     }
     dt.min(MAX_DT)
@@ -254,7 +255,8 @@ pub fn throw_velocity(velocity: Vec2, max_throw_speed: f32) -> Vec2 {
 
 /// 把反弹系数钳到 `[0, 1]`。NaN 视为 0（不反弹）。
 fn clamp_unit(v: f32) -> f32 {
-    if !(v > 0.0) {
+    // partial_cmp：NaN 视为 0（不反弹）。
+    if v.partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater) {
         return 0.0;
     }
     v.min(1.0)
@@ -328,8 +330,14 @@ mod tests {
         assert!((vel.y - (-600.0 * p.restitution)).abs() < 1e-4);
 
         // 低速触地 → 直接静止
-        let (_, vel, grounded) =
-            resolve_ground(Vec2::new(0.0, 20.0), Vec2::new(0.0, 10.0), size, 100.0, &p, 1.0 / 60.0);
+        let (_, vel, grounded) = resolve_ground(
+            Vec2::new(0.0, 20.0),
+            Vec2::new(0.0, 10.0),
+            size,
+            100.0,
+            &p,
+            1.0 / 60.0,
+        );
         assert!(grounded);
         assert_eq!(vel.y, 0.0);
     }
@@ -339,8 +347,13 @@ mod tests {
         let size = Vec2::new(100.0, 80.0);
         let screen = Vec2::new(1920.0, 1080.0);
         // 撞左墙：x 钳回 0，vx 反射
-        let (pos, vel, hit) =
-            resolve_walls(Vec2::new(-5.0, 100.0), Vec2::new(-300.0, 0.0), size, screen, 0.5);
+        let (pos, vel, hit) = resolve_walls(
+            Vec2::new(-5.0, 100.0),
+            Vec2::new(-300.0, 0.0),
+            size,
+            screen,
+            0.5,
+        );
         assert!(hit);
         assert_eq!(pos.x, 0.0);
         assert!((vel.x - 150.0).abs() < 1e-4);
@@ -358,8 +371,13 @@ mod tests {
         assert!((vel.x + 150.0).abs() < 1e-4);
 
         // 空中自由区：无碰撞
-        let (_, _, hit) =
-            resolve_walls(Vec2::new(960.0, 500.0), Vec2::new(100.0, 0.0), size, screen, 0.5);
+        let (_, _, hit) = resolve_walls(
+            Vec2::new(960.0, 500.0),
+            Vec2::new(100.0, 0.0),
+            size,
+            screen,
+            0.5,
+        );
         assert!(!hit);
     }
 
