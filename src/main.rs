@@ -22,8 +22,10 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    /// 骨架自检：版本号元信息非空（编译期元数据存在性）。
     #[test]
-    fn skeleton_compiles() {
-        assert!(true);
+    fn skeleton_metadata_present() {
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(!version.is_empty());
     }
 }

@@ -281,13 +281,15 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let path = config_path(&dir, 3);
 
-        let mut cfg = SlotConfig::default();
-        cfg.character = "big_blue_fat_fish".to_string();
-        cfg.rx = Some(120.0);
-        cfg.ry = Some(240.0);
-        cfg.facing = "right".to_string();
-        cfg.scale = 1.5;
-        cfg.on_top = false;
+        let cfg = SlotConfig {
+            character: "big_blue_fat_fish".to_string(),
+            rx: Some(120.0),
+            ry: Some(240.0),
+            facing: "right".to_string(),
+            scale: 1.5,
+            on_top: false,
+            ..SlotConfig::default()
+        };
 
         save(&path, &cfg).expect("保存应成功");
         assert!(!path
