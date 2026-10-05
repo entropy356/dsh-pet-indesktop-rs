@@ -328,8 +328,14 @@ mod tests {
         assert!((vel.y - (-600.0 * p.restitution)).abs() < 1e-4);
 
         // 低速触地 → 直接静止
-        let (_, vel, grounded) =
-            resolve_ground(Vec2::new(0.0, 20.0), Vec2::new(0.0, 10.0), size, 100.0, &p, 1.0 / 60.0);
+        let (_, vel, grounded) = resolve_ground(
+            Vec2::new(0.0, 20.0),
+            Vec2::new(0.0, 10.0),
+            size,
+            100.0,
+            &p,
+            1.0 / 60.0,
+        );
         assert!(grounded);
         assert_eq!(vel.y, 0.0);
     }
@@ -339,8 +345,13 @@ mod tests {
         let size = Vec2::new(100.0, 80.0);
         let screen = Vec2::new(1920.0, 1080.0);
         // 撞左墙：x 钳回 0，vx 反射
-        let (pos, vel, hit) =
-            resolve_walls(Vec2::new(-5.0, 100.0), Vec2::new(-300.0, 0.0), size, screen, 0.5);
+        let (pos, vel, hit) = resolve_walls(
+            Vec2::new(-5.0, 100.0),
+            Vec2::new(-300.0, 0.0),
+            size,
+            screen,
+            0.5,
+        );
         assert!(hit);
         assert_eq!(pos.x, 0.0);
         assert!((vel.x - 150.0).abs() < 1e-4);
@@ -358,8 +369,13 @@ mod tests {
         assert!((vel.x + 150.0).abs() < 1e-4);
 
         // 空中自由区：无碰撞
-        let (_, _, hit) =
-            resolve_walls(Vec2::new(960.0, 500.0), Vec2::new(100.0, 0.0), size, screen, 0.5);
+        let (_, _, hit) = resolve_walls(
+            Vec2::new(960.0, 500.0),
+            Vec2::new(100.0, 0.0),
+            size,
+            screen,
+            0.5,
+        );
         assert!(!hit);
     }
 

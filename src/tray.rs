@@ -40,6 +40,8 @@ mod tests {
     #[test]
     fn default_menu_has_exit() {
         let menu = Tray::default_menu();
-        assert!(menu.iter().any(|item| matches!(item, MenuItem::Action(s) if s == "退出")));
+        assert!(menu
+            .iter()
+            .any(|item| matches!(item, MenuItem::Action(s) if s == "退出")));
     }
 }

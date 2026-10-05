@@ -21,8 +21,8 @@
 //!
 //! 架构红线（继承自原项目）：解码链不得反向依赖 window 模块，窗口钩子只能通过注入接入。
 
-use std::sync::mpsc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
 use std::time::Instant;
 
 /// 一帧解码结果占位（第二阶段替换为真实帧缓冲）。
@@ -50,7 +50,9 @@ pub struct MonotonicClock {
 
 impl MonotonicClock {
     pub fn new() -> Self {
-        Self { start: Instant::now() }
+        Self {
+            start: Instant::now(),
+        }
     }
 }
 
@@ -76,7 +78,9 @@ pub struct VirtualClock {
 
 impl VirtualClock {
     pub fn new() -> Self {
-        Self { now_ms: AtomicU64::new(0) }
+        Self {
+            now_ms: AtomicU64::new(0),
+        }
     }
 
     /// 将时间线前移 `delta_ms`。
@@ -134,7 +138,8 @@ impl AnimationClip {
 
     /// 计算给定播放时长（毫秒）应显示的帧序号。
     pub fn frame_at(&self, elapsed_ms: u64) -> Frame {
-        let idx = ((elapsed_ms as f64 / 1000.0 * self.fps) as u32).min(self.frame_count.saturating_sub(1));
+        let idx = ((elapsed_ms as f64 / 1000.0 * self.fps) as u32)
+            .min(self.frame_count.saturating_sub(1));
         Frame {
             timestamp_ms: elapsed_ms,
             index: idx,
@@ -181,7 +186,10 @@ impl FrameSource for MockFrameSource {
     fn next_frame(&mut self, clock: &dyn Clock) -> Frame {
         if self.frames.is_empty() {
             self.calls += 1;
-            return Frame { timestamp_ms: clock.now_ms(), index: 0 };
+            return Frame {
+                timestamp_ms: clock.now_ms(),
+                index: 0,
+            };
         }
         let idx = self.calls % self.frames.len();
         self.calls += 1;
@@ -208,7 +216,10 @@ pub struct Playback<S: FrameSource> {
 
 impl<S: FrameSource> Playback<S> {
     pub fn new(source: S) -> Self {
-        Self { source, fanout: FrameFanout::new() }
+        Self {
+            source,
+            fanout: FrameFanout::new(),
+        }
     }
 
     pub fn fanout(&mut self) -> &mut FrameFanout {
@@ -241,7 +252,9 @@ pub struct FrameFanout {
 
 impl FrameFanout {
     pub fn new() -> Self {
-        Self { subscribers: Vec::new() }
+        Self {
+            subscribers: Vec::new(),
+        }
     }
 
     /// 注册一个订阅窗口，返回其专属接收端。
@@ -316,9 +329,18 @@ mod tests {
     #[test]
     fn mock_frame_source_drives_full_playback_loop() {
         let preset = vec![
-            Frame { timestamp_ms: 0, index: 0 },
-            Frame { timestamp_ms: 33, index: 1 },
-            Frame { timestamp_ms: 66, index: 2 },
+            Frame {
+                timestamp_ms: 0,
+                index: 0,
+            },
+            Frame {
+                timestamp_ms: 33,
+                index: 1,
+            },
+            Frame {
+                timestamp_ms: 66,
+                index: 2,
+            },
         ];
         let mut playback = Playback::new(MockFrameSource::new(preset));
         let clock = VirtualClock::new();
@@ -347,7 +369,10 @@ mod tests {
         let rx2 = fanout.subscribe();
         assert_eq!(fanout.subscriber_count(), 2);
 
-        let alive = fanout.broadcast(Frame { timestamp_ms: 10, index: 3 });
+        let alive = fanout.broadcast(Frame {
+            timestamp_ms: 10,
+            index: 3,
+        });
         assert_eq!(alive, 2);
 
         let f1 = rx1.recv().expect("窗口 1 应收到帧");
@@ -363,7 +388,10 @@ mod tests {
         let rx_tmp = fanout.subscribe();
 
         drop(rx_tmp); // 模拟窗口关闭
-        let alive = fanout.broadcast(Frame { timestamp_ms: 0, index: 0 });
+        let alive = fanout.broadcast(Frame {
+            timestamp_ms: 0,
+            index: 0,
+        });
         assert_eq!(alive, 1, "已关闭窗口的订阅应在广播时摘除");
         assert_eq!(fanout.subscriber_count(), 1);
 
@@ -374,7 +402,10 @@ mod tests {
     #[test]
     fn playback_end_to_end_mock_to_two_windows() {
         let preset: Vec<Frame> = (0..4)
-            .map(|i| Frame { timestamp_ms: i as u64 * 33, index: i as u32 })
+            .map(|i| Frame {
+                timestamp_ms: i as u64 * 33,
+                index: i as u32,
+            })
             .collect();
         let mut playback = Playback::new(MockFrameSource::new(preset));
         let clock = VirtualClock::new();
