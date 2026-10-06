@@ -1,8 +1,8 @@
 # SPEC —— 开发规范正文（单一事实源）
 
 本文件是 dsh-pet-indesktop-rs 及其协作体系（planner / 执行端）的**规范唯一权威
-版本**。变更流程见「规范公告」一节；变更历史见本仓库 Discussions 的
-Announcements 分类。
+版本**。各端动工前重读本文件确认最新版；**变更历史以本文件的 git 提交记录
+为准**。Announcements 分类为临时应急广播位（见「应急公告」一节）。
 
 > 2026-10-07 起生效（自 planning-center README 迁入并公开）。本文件由
 > planner 维护——planner 可直接提交规范文档，不受「不直接写主仓库代码」
@@ -14,7 +14,7 @@ Announcements 分类。
    依赖窗口层；`animation` 不得反向依赖 `window`；`PetWindow` 私有面冻结。
    由 `scripts/check-arch.sh` 三项检查 + CI 强制。
 2. **接口先行**：跨轨依赖（如解码器 ← Frame 契约）以 issue 内契约为准；
-   契约变更须发公告。
+   契约变更须在契约所在 issue 内更新并评论提示，相关轨开工前复查契约。
 3. **issue 分工**：规划端建任务 issue（含背景与验收标准）；执行端领取时
    评论认领并简述计划，同时开执行 issue（标题 `exec: 简述 (#N)`），完成后
    在 commit / PR 里 `closes #N` 指回父任务；规划端不动执行端已领取的
@@ -22,23 +22,19 @@ Announcements 分类。
 4. **素材策略（2026-10-07 定稿）**：素材不入库、PNG 序列帧优先、MIT 音效
    入库；**内存占用 > 磁盘占用 / 包体**是资源类设计的基准约束。
 5. **执行端反馈**：契约 / 验收标准的疑问走相关 issue 评论并 @ 用户；
-   执行端 token 无 Discussions 写权限，Announcements 只读（Q&A / Ideas
-   分类对执行端关闭，公告位隔离优先）。
+   执行端 token 无 Discussions 写权限，Announcements 只读（公告位由
+   planner 独占，Q&A / Ideas 分类对执行端关闭）。
 
-## 2. 规范公告（Announcements）
+## 2. 应急公告（Announcements，2026-10-07 降级定稿）
 
-- 规范的发布与变更**只从本仓库 Discussions 的 Announcements 分类广播**；
-  各端动工前应确认已读最新公告。
-- **变更流程**：先改本文件，再发一条编号公告（标题格式
-  `公告 NNN · 标题（YYYY-MM-DD）`），说明改了什么、影响谁、何时生效。
-- **幂等规则（2026-10-07 定稿）**：发公告前先列出 Announcements 现存
-  讨论，同标题 / 同主题一律不重发；编号取现存最大 + 1（不靠记忆递增）；
-  API 报错但服务端可能已建成功时，先查列表再决定是否重试。公告正文
-  **不嵌入规范快照**，只写变更说明 + 指向本文件的链接，避免快照漂移。
-- **公告位保护（2026-10-07 定稿）**：全体系共用 entropy356 单一账号，
-  「仅维护者可发」对任何 token 都不构成技术隔离；真正的隔离靠执行端
-  token 不含 Discussions 写权限（PAT 规格见 agent-bootstrap
-  `agent/README.md`）。Announcements 发帖由 planner 独占。
+- 主仓库 Discussions 的 Announcements 分类为**临时应急广播位**：仅用于
+  需要立即知悉、来不及走文档流程的事项——平台 / CI 突变、令牌或权限
+  事故、紧急停工指令等。
+- **规范变更不发公告**：直接修改本文件，git 提交历史即变更记录。
+- 应急公告不要求编号与幂等规则；事态解除后由 planner 删除，保持该位
+  常空（正常状态下为空列表）。
+- 发帖权由 planner 独占——靠执行端 token 不含 Discussions 写权限实现
+  隔离（PAT 规格见 agent-bootstrap `agent/README.md`）。
 
 ## 3. 身份与禁区（双端协作）
 
