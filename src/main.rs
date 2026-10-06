@@ -52,11 +52,7 @@ impl ApplicationHandler for PetApp {
     /// 组装 `PetWindow`（注入 `WinitBackend`），订阅 animation 帧通道。
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attrs = winit_backend::window_attributes(&self.config);
-        let winit_window = Arc::new(
-            event_loop
-                .create_window(attrs)
-                .expect("创建桌宠窗口失败"),
-        );
+        let winit_window = Arc::new(event_loop.create_window(attrs).expect("创建桌宠窗口失败"));
         self.window_id = Some(winit_window.id());
 
         let backend = WinitBackend::new(Arc::clone(&winit_window));
