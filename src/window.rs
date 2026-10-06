@@ -14,6 +14,7 @@
 pub mod backend;
 pub mod edge_probe;
 pub mod state;
+pub mod winit_backend;
 
 use backend::WindowBackend;
 use state::{TransitionError, WindowEvent, WindowState};
