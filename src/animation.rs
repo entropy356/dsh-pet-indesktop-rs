@@ -23,15 +23,70 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::Instant;
 
-/// 一帧解码结果占位（第二阶段替换为真实帧缓冲）。
+/// 一帧解码结果（issue #10 契约定稿）。
+///
+/// 像素数据以 `Arc<[u8]>` 持有：RGBA8、行主序、无 stride padding，
+/// 长度恒等于 `width * height * 4`。跨窗共享只递增引用计数，
+/// 不做逐订阅者深拷贝（内存峰值最小判据，用户拍板）。
+/// 解码侧产出新一帧时整体替换 `Arc`，永不原地改写已共享的 buffer。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Frame {
     /// 帧时间戳（毫秒）
     pub timestamp_ms: u64,
     /// 帧序号
     pub index: u32,
+    /// 像素宽（像素）
+    pub width: u32,
+    /// 像素高（像素）
+    pub height: u32,
+    /// RGBA8 像素 buffer（行主序，无 stride padding），跨窗零拷贝共享
+    pub pixels: Arc<[u8]>,
+}
+
+impl Frame {
+    /// 构造一帧；`pixels.len() != (width * height * 4)` 时 panic。
+    ///
+    /// 契约在编译期锚定 buffer 尺寸，构造即校验，坏帧不进入分发链。
+    #[must_use]
+    pub fn new(timestamp_ms: u64, index: u32, width: u32, height: u32, pixels: Arc<[u8]>) -> Self {
+        let expected = width as usize * height as usize * 4;
+        assert_eq!(
+            pixels.len(),
+            expected,
+            "Frame 像素 buffer 尺寸须为 width*height*4（RGBA8 无 padding）"
+        );
+        Self {
+            timestamp_ms,
+            index,
+            width,
+            height,
+            pixels,
+        }
+    }
+
+    /// 索引帧占位构造（骨架期 / Mock / 测试）：无像素数据的逻辑帧。
+    ///
+    /// `pixels` 为空、`width` / `height` 为 0；渲染侧见空 buffer
+    /// 即走占位呈现路径（#9 渲染轨按此判定）。
+    #[must_use]
+    pub fn logical(timestamp_ms: u64, index: u32) -> Self {
+        Self {
+            timestamp_ms,
+            index,
+            width: 0,
+            height: 0,
+            pixels: Arc::from(Vec::new()),
+        }
+    }
+
+    /// 是否为无像素数据的索引帧（占位路径判定依据）。
+    #[must_use]
+    pub fn is_logical(&self) -> bool {
+        self.pixels.is_empty()
+    }
 }
 
 /// 时钟抽象：播放时间线的唯一来源。
@@ -137,13 +192,13 @@ impl AnimationClip {
     }
 
     /// 计算给定播放时长（毫秒）应显示的帧序号。
+    ///
+    /// 换算型帧源只产出索引帧（[`Frame::logical`]），无像素数据；
+    /// 真实解码器（#12）按序号查帧后产出带 buffer 的像素帧。
     pub fn frame_at(&self, elapsed_ms: u64) -> Frame {
         let idx = ((elapsed_ms as f64 / 1000.0 * self.fps) as u32)
             .min(self.frame_count.saturating_sub(1));
-        Frame {
-            timestamp_ms: elapsed_ms,
-            index: idx,
-        }
+        Frame::logical(elapsed_ms, idx)
     }
 }
 
@@ -186,10 +241,7 @@ impl FrameSource for MockFrameSource {
     fn next_frame(&mut self, clock: &dyn Clock) -> Frame {
         if self.frames.is_empty() {
             self.calls += 1;
-            return Frame {
-                timestamp_ms: clock.now_ms(),
-                index: 0,
-            };
+            return Frame::logical(clock.now_ms(), 0);
         }
         let idx = self.calls % self.frames.len();
         self.calls += 1;
@@ -244,10 +296,20 @@ impl<S: FrameSource> Playback<S> {
 /// `mpsc::Receiver<Frame>`；解码链侧 [`broadcast`](FrameFanout::broadcast)
 /// 一帧全员分发。接收端被 drop（窗口关闭）的订阅在下次广播时自动摘除。
 ///
-/// 通道签名占位：第二阶段真实解码线程若需要「只追最新帧」语义，
-/// 可换成 `sync_channel(1)` + `try_send`，签名不变。
+/// # 只追最新帧（issue #10 契约定稿）
+///
+/// 每个订阅通道为 `mpsc::sync_channel(1)`（容量 1），广播端用
+/// `try_send`：通道已满（接收侧尚未取走上帧）时**丢弃待投递的帧、
+/// 不阻塞解码链**；接收端永远不会积压排队。配合渲染侧
+/// 「取帧时排空、只留最新」即可实现只追最新帧语义（取帧节奏归渲染轨 #9）。
+///
+/// # 零拷贝（issue #10 契约定稿，用户拍板）
+///
+/// `Frame` 的像素数据为 `Arc<[u8]>`：广播时对每个订阅者只做
+/// `Frame` 浅克隆（引用计数 +1），**不做逐订阅者深拷贝整帧**；
+/// 解码侧产出新一帧时整体替换 `Arc`，永不原地改写已共享 buffer。
 pub struct FrameFanout {
-    subscribers: Vec<mpsc::Sender<Frame>>,
+    subscribers: Vec<mpsc::SyncSender<Frame>>,
 }
 
 impl FrameFanout {
@@ -258,16 +320,27 @@ impl FrameFanout {
     }
 
     /// 注册一个订阅窗口，返回其专属接收端。
+    ///
+    /// 通道容量 1（只追最新帧语义，见类型文档）。
     pub fn subscribe(&mut self) -> mpsc::Receiver<Frame> {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(1);
         self.subscribers.push(tx);
         rx
     }
 
     /// 向所有存活订阅者广播一帧，返回存活订阅数。
-    /// 发送失败（接收端已关闭）的订阅被静默摘除。
+    ///
+    /// * 接收端已关闭（`Disconnected`）→ 订阅静默摘除；
+    /// * 通道已满（`Full`）→ 丢弃投递给该订阅者的本帧，订阅保留
+    ///   （窗口还活着，只是没来得及取帧）；
+    /// * 帧数据通过 `Arc` 浅克隆共享，无逐订阅者深拷贝。
     pub fn broadcast(&mut self, frame: Frame) -> usize {
-        self.subscribers.retain(|tx| tx.send(frame.clone()).is_ok());
+        self.subscribers
+            .retain(|tx| match tx.try_send(frame.clone()) {
+                Ok(()) => true,
+                Err(mpsc::TrySendError::Full(_)) => true,
+                Err(mpsc::TrySendError::Disconnected(_)) => false,
+            });
         self.subscribers.len()
     }
 
@@ -329,18 +402,9 @@ mod tests {
     #[test]
     fn mock_frame_source_drives_full_playback_loop() {
         let preset = vec![
-            Frame {
-                timestamp_ms: 0,
-                index: 0,
-            },
-            Frame {
-                timestamp_ms: 33,
-                index: 1,
-            },
-            Frame {
-                timestamp_ms: 66,
-                index: 2,
-            },
+            Frame::logical(0, 0),
+            Frame::logical(33, 1),
+            Frame::logical(66, 2),
         ];
         let mut playback = Playback::new(MockFrameSource::new(preset));
         let clock = VirtualClock::new();
@@ -369,10 +433,7 @@ mod tests {
         let rx2 = fanout.subscribe();
         assert_eq!(fanout.subscriber_count(), 2);
 
-        let alive = fanout.broadcast(Frame {
-            timestamp_ms: 10,
-            index: 3,
-        });
+        let alive = fanout.broadcast(Frame::logical(10, 3));
         assert_eq!(alive, 2);
 
         let f1 = rx1.recv().expect("窗口 1 应收到帧");
@@ -388,10 +449,7 @@ mod tests {
         let rx_tmp = fanout.subscribe();
 
         drop(rx_tmp); // 模拟窗口关闭
-        let alive = fanout.broadcast(Frame {
-            timestamp_ms: 0,
-            index: 0,
-        });
+        let alive = fanout.broadcast(Frame::logical(0, 0));
         assert_eq!(alive, 1, "已关闭窗口的订阅应在广播时摘除");
         assert_eq!(fanout.subscriber_count(), 1);
 
@@ -402,10 +460,7 @@ mod tests {
     #[test]
     fn playback_end_to_end_mock_to_two_windows() {
         let preset: Vec<Frame> = (0..4)
-            .map(|i| Frame {
-                timestamp_ms: i as u64 * 33,
-                index: i as u32,
-            })
+            .map(|i| Frame::logical(i as u64 * 33, i as u32))
             .collect();
         let mut playback = Playback::new(MockFrameSource::new(preset));
         let clock = VirtualClock::new();
@@ -413,18 +468,85 @@ mod tests {
         let rx_a = playback.fanout().subscribe();
         let rx_b = playback.fanout().subscribe();
 
+        // 订阅通道容量 1（只追最新帧语义，issue #10 契约定稿）：
+        // 每 tick 后即时取帧，逐帧验证双窗送达；消费不及时后续帧被丢弃
+        // 而非积压，因此旧语义「先连投再收满 4 帧」不再成立。
         for i in 0..4u64 {
             let (frame, alive) = playback.tick(&clock);
-            assert_eq!(alive, 2);
+            assert_eq!(alive, 2, "满通道丢帧不改变存活订阅数");
             assert_eq!(frame.index, i as u32 % 4);
+            assert_eq!(rx_a.recv().expect("窗口 A 应逐帧送达").index, i as u32 % 4);
+            assert_eq!(rx_b.recv().expect("窗口 B 应逐帧送达").index, i as u32 % 4);
             clock.advance_ms(33);
         }
 
-        for rx in [&rx_a, &rx_b] {
-            for i in 0..4u64 {
-                let f = rx.recv().expect("双窗均应收满 4 帧");
-                assert_eq!(f.index, i as u32 % 4);
-            }
-        }
+        // 消费后通道已腾空，无残留帧。
+        assert!(rx_a.try_recv().is_err());
+        assert!(rx_b.try_recv().is_err());
+    }
+
+    // ---------- Frame 像素化契约（issue #10） ----------
+
+    #[test]
+    fn frame_pixel_buffer_size_is_validated() {
+        let pixels = vec![0u8; 2 * 3 * 4]; // 2x3 RGBA8
+        let f = Frame::new(0, 0, 2, 3, pixels.into());
+        assert_eq!(f.width, 2);
+        assert_eq!(f.height, 3);
+        assert_eq!(f.pixels.len(), 24);
+        assert!(!f.is_logical());
+    }
+
+    #[test]
+    #[should_panic(expected = "width*height*4")]
+    fn frame_rejects_mismatched_pixel_buffer() {
+        let pixels = vec![0u8; 10]; // 应为 2*3*4 = 24
+        let _ = Frame::new(0, 0, 2, 3, pixels.into());
+    }
+
+    #[test]
+    fn logical_frame_has_no_pixels() {
+        let f = Frame::logical(33, 7);
+        assert!(f.is_logical());
+        assert_eq!(f.width, 0);
+        assert_eq!(f.height, 0);
+        assert_eq!(f.timestamp_ms, 33);
+        assert_eq!(f.index, 7);
+    }
+
+    #[test]
+    fn fanout_shares_pixel_buffer_zero_copy() {
+        let mut fanout = FrameFanout::new();
+        let rx1 = fanout.subscribe();
+        let rx2 = fanout.subscribe();
+
+        let pixels = vec![42u8; 4 * 4 * 4];
+        let frame = Frame::new(0, 0, 4, 4, pixels.into());
+        let sent_ptr = Arc::as_ptr(&frame.pixels);
+        assert_eq!(fanout.broadcast(frame), 2);
+
+        let f1 = rx1.recv().expect("窗口 1 应收到帧");
+        let f2 = rx2.recv().expect("窗口 2 应收到帧");
+        // 零拷贝：两个订阅者拿到的 buffer 与广播帧是同一份堆数据。
+        assert!(Arc::ptr_eq(&f1.pixels, &f2.pixels));
+        assert_eq!(Arc::as_ptr(&f1.pixels), sent_ptr);
+        assert_eq!(f1.pixels[0], 42);
+    }
+
+    #[test]
+    fn fanout_full_channel_drops_frame_keeps_subscriber() {
+        let mut fanout = FrameFanout::new();
+        let rx = fanout.subscribe();
+
+        // 不取帧连投两帧：容量 1，第二帧被丢弃（try_send Full → 订阅保留）。
+        assert_eq!(fanout.broadcast(Frame::logical(0, 0)), 1);
+        assert_eq!(fanout.broadcast(Frame::logical(33, 1)), 1);
+        assert_eq!(fanout.subscriber_count(), 1, "满通道不得误摘订阅");
+
+        let f = rx.recv().expect("通道内的首帧应可取出");
+        assert_eq!(f.index, 0, "通道内保留的是先投递的帧");
+        // 取走后通道腾空，后续广播恢复投递。
+        assert_eq!(fanout.broadcast(Frame::logical(66, 2)), 1);
+        assert_eq!(rx.recv().expect("腾空后应恢复收帧").index, 2);
     }
 }
