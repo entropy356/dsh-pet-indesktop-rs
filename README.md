@@ -27,7 +27,7 @@
 | 渲染 | Qt 绘制 | `softbuffer`（起步）→ `wgpu`（加速） |
 | 托盘 | Qt SystemTray | `tray-icon` |
 | 配置 | JSON | `serde` + `serde_json`/`toml` |
-| 视频解码 | OpenCV/Qt Multimedia | `ffmpeg-next` 或平台原生解码 |
+| 视频解码 | OpenCV/Qt Multimedia | PNG 序列帧优先（纯 Rust `png`/`image` 解码，issue #12 定稿）；webm/VP9 见 backlog #16 |
 | 纯逻辑层 | collision.py / physics.py | 本仓 `src/physics.rs`（零 GUI 依赖，单测守护） |
 
 ## 架构红线（继承自原项目，CI 守护）
