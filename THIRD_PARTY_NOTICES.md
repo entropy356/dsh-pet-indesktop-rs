@@ -1,7 +1,9 @@
 # Third-Party Software Notices and Information
 
-本仓库随源码分发 MIT 音效素材（见第 2 节）；角色动画素材**不入库**，
-由用户按 README 素材说明自行放置，授权沿用原项目
+本仓库**不携带角色动画素材本体**：角色素材由用户自行获取并经
+`scripts/convert_assets.py`（issue #14）转换为 PNG 序列帧后放置到本地
+`assets/` 目录（素材与 manifest 已加入 `.gitignore`）。**MIT 音效素材
+除外**——允许自由再分发，随源码直接入库（见第 2 节）。素材授权沿用原项目
 [MerZlin/dsh-pet-indesktop](https://github.com/MerZlin/dsh-pet-indesktop)
 的 THIRD_PARTY_NOTICES.md 约定。
 
