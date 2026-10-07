@@ -16,7 +16,8 @@ command -v sha256sum >/dev/null 2>&1 || { echo "缺少 sha256sum" >&2; exit 1; }
 command -v tar >/dev/null 2>&1 || { echo "缺少 tar" >&2; exit 1; }
 command -v xz >/dev/null 2>&1 || { echo "缺少 xz-utils（tar -J 解压需要）" >&2; exit 1; }
 
-TARBALL="vendor.tar.xz"
+# 制品名与 tag 严格配套（release 资产名即 <tag>.tar.xz，lock 变更换 tag 时自动同步）
+TARBALL="${VENDOR_TAG}.tar.xz"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
