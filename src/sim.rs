@@ -47,16 +47,103 @@ pub enum PointerEvent {
     Release { velocity: Vec2 },
 }
 
-/// 模拟场景参数：物理参数 + 形象尺寸 + 屏幕几何。
+/// 约束域：一台显示器的全局几何（issue #35）。
 ///
-/// `size` 为形象尺寸（像素），`floor_y` 为地面表面 y 坐标，`screen`
-/// 为屏幕尺寸（左右墙与天花板边界）。均由 config 注入（第二阶段接线）。
-#[derive(Debug, Clone, Copy)]
+/// 坐标一律为**全局物理像素**（winit 虚拟桌面坐标系，与
+/// `WinitBackend::set_position` 语义一致）。多显示器布局由窗口轨枚举
+/// 注入（`main.rs` 接线），本模块保持纯逻辑、不引用任何 GUI 类型。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MonitorDomain {
+    /// 显示器左上角全局坐标。
+    pub position: Vec2,
+    /// 显示器尺寸（宽 × 高）。
+    pub size: Vec2,
+    /// 地面表面 y（全局坐标）。接线侧取显示器底边
+    /// `position.y + size.y`；任务栏等留白可自定义。
+    pub floor_y: f32,
+}
+
+impl MonitorDomain {
+    pub fn new(position: Vec2, size: Vec2) -> Self {
+        Self {
+            position,
+            size,
+            floor_y: position.y + size.y,
+        }
+    }
+
+    /// 全部域的包围盒（并集包络）。
+    ///
+    /// 墙 / 天花板按包络解算（issue #35）：相邻 / 分离屏之间的边界**不设墙**，
+    /// 抛掷可穿越屏边界（全局坐标连续），落入哪台显示器由约束域切换接管；
+    /// 单域时包络即该域，与旧单屏语义等价。地面不按包络——按当前域
+    /// （见 `step` 的 Throwing 分支）。
+    fn hull(domains: &[MonitorDomain]) -> MonitorDomain {
+        debug_assert!(!domains.is_empty());
+        let min_x = domains
+            .iter()
+            .map(|d| d.position.x)
+            .fold(f32::MAX, f32::min);
+        let min_y = domains
+            .iter()
+            .map(|d| d.position.y)
+            .fold(f32::MAX, f32::min);
+        let max_x = domains
+            .iter()
+            .map(|d| d.position.x + d.size.x)
+            .fold(f32::MIN, f32::max);
+        let max_y = domains
+            .iter()
+            .map(|d| d.position.y + d.size.y)
+            .fold(f32::MIN, f32::max);
+        MonitorDomain {
+            position: Vec2::new(min_x, min_y),
+            size: Vec2::new(max_x - min_x, max_y - min_y),
+            floor_y: max_y,
+        }
+    }
+
+    /// 窗口矩形（左上角 `pos`、尺寸 `size`）与本域的重叠面积。
+    /// 不相交返回 0。
+    fn overlap_area(pos: Vec2, size: Vec2, d: &MonitorDomain) -> f32 {
+        let ox = (pos.x + size.x).min(d.position.x + d.size.x) - pos.x.max(d.position.x);
+        let oy = (pos.y + size.y).min(d.position.y + d.size.y) - pos.y.max(d.position.y);
+        if ox <= 0.0 || oy <= 0.0 {
+            0.0
+        } else {
+            ox * oy
+        }
+    }
+}
+
+/// 模拟场景参数：物理参数 + 形象尺寸 + 多显示器约束域。
+///
+/// `size` 为形象尺寸（像素）；`domains` 为约束域列表（至少一项），
+/// 墙 / 天花板 / 地面解算在**窗口当前所在域**内进行（issue #35）。
+/// 单屏 = 单域，域左上角在全局原点时与旧 `screen` / `floor_y`
+/// 字段语义完全等价。均由 config / 窗口轨接线注入。
+#[derive(Debug, Clone)]
 pub struct SimParams {
     pub physics: PhysicsParams,
     pub size: Vec2,
-    pub screen: Vec2,
-    pub floor_y: f32,
+    /// 约束域（至少一项；空列表由接线方兜底，运行期不校验）。
+    pub domains: Vec<MonitorDomain>,
+}
+
+impl SimParams {
+    /// 单屏兼容构造：域左上角在全局原点、地面可低于屏幕底
+    /// （对齐旧 `screen` / `floor_y` 字段语义）。
+    pub fn single_screen(physics: PhysicsParams, size: Vec2, screen: Vec2, floor_y: f32) -> Self {
+        Self {
+            physics,
+            size,
+            domains: vec![MonitorDomain {
+                position: Vec2::zero(),
+                size: screen,
+                floor_y,
+            }],
+        }
+    }
 }
 
 /// 控制器内部相位。与窗口状态机平行维护——本模块只通过 [`PetWindow`]
@@ -86,17 +173,55 @@ pub struct PetSim {
     position: Vec2,
     velocity: Vec2,
     phase: Phase,
+    /// 当前约束域在 `params.domains` 中的下标（issue #35）。
+    /// 域选择 = 与窗口矩形重叠面积最大者；窗口完全落入屏间空隙时
+    /// 粘滞保持当前域（由墙钳回，杜绝悬空无限坠落）。
+    domain: usize,
 }
 
 impl PetSim {
     /// 创建模拟器。`position` 为形象左上角初始位置（建议取
     /// `win.position()` 换算，保证与窗口起点一致）。
+    ///
+    /// 初始约束域取与初始窗口矩形重叠面积最大者（全零重叠取 0）。
     pub fn new(position: Vec2, params: SimParams) -> Self {
+        let mut domain = 0usize;
+        let mut best_area = 0.0f32;
+        for (i, d) in params.domains.iter().enumerate() {
+            let area = MonitorDomain::overlap_area(position, params.size, d);
+            if area > best_area {
+                best_area = area;
+                domain = i;
+            }
+        }
         Self {
             params,
             position,
             velocity: Vec2::zero(),
             phase: Phase::Idle,
+            domain,
+        }
+    }
+
+    /// 当前活动约束域下标（诊断 / 测试用）。
+    pub fn active_domain(&self) -> usize {
+        self.domain
+    }
+
+    /// 更新活动约束域：与窗口矩形重叠面积最大者（并列取序号小者，
+    /// 顺序遍历 + 严格大于即实现）；零重叠时粘滞保持当前域。
+    fn update_domain(&mut self, pos: Vec2) {
+        let mut best: Option<usize> = None;
+        let mut best_area = 0.0f32;
+        for (i, d) in self.params.domains.iter().enumerate() {
+            let area = MonitorDomain::overlap_area(pos, self.params.size, d);
+            if area > best_area {
+                best_area = area;
+                best = Some(i);
+            }
+        }
+        if let Some(i) = best {
+            self.domain = i;
         }
     }
 
@@ -171,28 +296,41 @@ impl PetSim {
                 );
                 self.position = pos;
                 self.velocity = vel;
+                // 跨屏拖拽：窗口矩形可能进入另一显示器，先更新约束域，
+                // 松手后的 Thrown 解算即按目标屏进行（issue #35）。
+                self.update_domain(self.position);
                 let _ = win.drag_to(self.px(), self.py());
             }
             Phase::Throwing => {
-                // 顺序与 physics.rs 集成场景一致：飞行 → 墙 → 地面
+                // 顺序与 physics.rs 集成场景一致：飞行 → 墙 → 地面。
+                // 墙 / 天花板按**全部域的并集包络**解算（屏间边界不设墙，
+                // 抛掷穿越屏边界坐标连续）；地面按**当前约束域**解算
+                // （issue #35：跨屏飞行时切换约束域）。窗口完全落入屏间
+                // 空隙时域粘滞保持，沿用最后活动域的地面高度——不悬空
+                // 无限坠落。单域原点布局与旧单屏语义等价。
                 let pos = step_free(
                     self.position,
                     &mut self.velocity,
                     dt,
                     self.params.physics.gravity,
                 );
-                let (pos, vel, _hit_wall) = resolve_walls(
-                    pos,
+                self.update_domain(pos);
+                let hull = MonitorDomain::hull(&self.params.domains);
+                let local = Vec2::new(pos.x - hull.position.x, pos.y - hull.position.y);
+                let (local, vel, _hit_wall) = resolve_walls(
+                    local,
                     self.velocity,
                     self.params.size,
-                    self.params.screen,
+                    hull.size,
                     self.params.physics.restitution,
                 );
+                let pos = Vec2::new(local.x + hull.position.x, local.y + hull.position.y);
+                let floor_y = self.params.domains[self.domain].floor_y;
                 let (pos, vel, grounded) = resolve_ground(
                     pos,
                     vel,
                     self.params.size,
-                    self.params.floor_y,
+                    floor_y,
                     &self.params.physics,
                     dt,
                 );
@@ -202,7 +340,8 @@ impl PetSim {
                 if grounded {
                     // 首次触地即落地（issue #11 约定：ground_probe 语义触发
                     // land）；Visible = 静止，速度归零。resolve_ground 已把
-                    // 位置钳回地面（bottom = floor_y），落点必然合法。
+                    // 位置钳回当前域地面（bottom = domain.floor_y），落点
+                    // 必然合法。
                     self.velocity = Vec2::zero();
                     let _ = win.land(self.px(), self.py());
                     self.phase = Phase::Idle;
@@ -255,12 +394,12 @@ mod tests {
 
     /// 测试场景：1920×1080 屏幕，形象 100×80，地面 = 屏幕底。
     fn sim_params() -> SimParams {
-        SimParams {
-            physics: PhysicsParams::default(),
-            size: Vec2::new(100.0, 80.0),
-            screen: Vec2::new(1920.0, 1080.0),
-            floor_y: 1080.0,
-        }
+        SimParams::single_screen(
+            PhysicsParams::default(),
+            Vec2::new(100.0, 80.0),
+            Vec2::new(1920.0, 1080.0),
+            1080.0,
+        )
     }
 
     /// 构造（已 show 的窗口 + 初始位置的模拟器 + 共享 mock）。
@@ -366,11 +505,11 @@ mod tests {
         let pos = sim.position();
         // 贴地：bottom = floor_y
         assert!(
-            (pos.y + p.size.y - p.floor_y).abs() < 1e-2,
+            (pos.y + p.size.y - p.domains[0].floor_y).abs() < 1e-2,
             "未贴地: {pos:?}"
         );
         // 屏内
-        assert!(pos.x >= 0.0 && pos.x + p.size.x <= p.screen.x);
+        assert!(pos.x >= 0.0 && pos.x + p.size.x <= p.domains[0].size.x);
         // 静止
         assert_eq!(sim.velocity(), Vec2::zero());
         // land 落点与窗口同步
@@ -442,6 +581,268 @@ mod tests {
         assert_eq!(mock.calls(), ["show()"]);
     }
 
+    // ---- 多显示器分域约束（issue #35）----
+
+    /// fixture 变体：自定义 SimParams（多屏布局用）。
+    fn fixture_with(
+        params: SimParams,
+        start: (f32, f32),
+    ) -> (PetSim, PetWindow, std::rc::Rc<MockWindowBackend>) {
+        let mock = std::rc::Rc::new(MockWindowBackend::new());
+        let backend = Box::new(SharedBackend(std::rc::Rc::clone(&mock)));
+        let mut win = PetWindow::new(crate::window::PetWindowConfig::default(), backend);
+        win.show().unwrap();
+        let sim = PetSim::new(Vec2::new(start.0, start.1), params);
+        (sim, win, mock)
+    }
+
+    /// 左右双屏：主屏 (0,0,1920x1080) + 副屏 (1920,0,1280x720)。
+    /// 从主屏右侧向右抛出，宠物应落在副屏（域切换 + 副屏地面 720）。
+    #[test]
+    fn throw_crosses_side_by_side_boundary_and_lands_on_secondary() {
+        let mut params = sim_params();
+        params.domains.push(MonitorDomain::new(
+            Vec2::new(1920.0, 0.0),
+            Vec2::new(1280.0, 720.0),
+        ));
+        let (mut sim, mut win, mock) = fixture_with(params, (1800.0, 400.0));
+        assert_eq!(sim.active_domain(), 0, "初始应在主屏域");
+
+        sim.handle(PointerEvent::Press, &mut win);
+        sim.handle(
+            PointerEvent::Release {
+                velocity: Vec2::new(1200.0, 0.0),
+            },
+            &mut win,
+        );
+        assert!(sim.is_throwing());
+
+        let mut landed = false;
+        for _ in 0..1200 {
+            sim.step(DT, &mut win, &backend(&mock));
+            if !sim.is_throwing() {
+                landed = true;
+                break;
+            }
+        }
+        assert!(landed, "20 秒内未着地");
+        let pos = sim.position();
+        assert_eq!(sim.active_domain(), 1, "落点应在副屏域");
+        assert!(
+            pos.x >= 1920.0 && pos.x + 100.0 <= 3200.0,
+            "越副屏右墙: {pos:?}"
+        );
+        assert!(
+            (pos.y + 80.0 - 720.0).abs() < 1e-2,
+            "应落在副屏地面 720: {pos:?}"
+        );
+    }
+
+    /// 上下错位双屏：主屏 (0,0,1920x1080) + 副屏 (400,1080,1280x720)。
+    /// 主屏地面不可穿透（无法抛掷下穿），从主屏**拖拽**到下方副屏
+    /// 再松手，应按副屏域解算并落在副屏地面 1800。
+    #[test]
+    fn drag_to_stacked_secondary_lands_on_its_floor() {
+        let mut params = sim_params();
+        params.domains.push(MonitorDomain::new(
+            Vec2::new(400.0, 1080.0),
+            Vec2::new(1280.0, 720.0),
+        ));
+        let (mut sim, mut win, mock) = fixture_with(params, (600.0, 200.0));
+        assert_eq!(sim.active_domain(), 0);
+
+        sim.handle(PointerEvent::Press, &mut win);
+        sim.handle(
+            PointerEvent::Move {
+                x: 600.0,
+                y: 1400.0,
+            },
+            &mut win,
+        );
+        for _ in 0..60 {
+            sim.step(DT, &mut win, &backend(&mock));
+        }
+        assert_eq!(sim.active_domain(), 1, "拖入下方副屏应切域");
+
+        sim.handle(
+            PointerEvent::Release {
+                velocity: Vec2::new(0.0, 0.0),
+            },
+            &mut win,
+        );
+        let mut landed = false;
+        for _ in 0..1200 {
+            sim.step(DT, &mut win, &backend(&mock));
+            if !sim.is_throwing() {
+                landed = true;
+                break;
+            }
+        }
+        assert!(landed, "20 秒内未着地");
+        let pos = sim.position();
+        assert_eq!(sim.active_domain(), 1);
+        assert!(
+            (pos.y + 80.0 - 1800.0).abs() < 1e-2,
+            "应落在副屏地面 1800: {pos:?}"
+        );
+    }
+
+    /// 屏间空隙穿越：主屏 (0,0,1000x800) + 副屏 (2600,0,1000x800)，
+    /// 中间 1600px 无屏区。向右抛出：屏间边界不设墙（包络解算），
+    /// 宠物应穿越空隙落入副屏；穿越期间域粘滞沿用主屏地面高度
+    /// （不悬空无限坠落）。
+    #[test]
+    fn throw_across_gap_lands_on_distant_secondary() {
+        let mut params = sim_params();
+        params.domains[0].size = Vec2::new(1000.0, 800.0);
+        params.domains[0].floor_y = 800.0;
+        params.domains.push(MonitorDomain::new(
+            Vec2::new(2600.0, 0.0),
+            Vec2::new(1000.0, 800.0),
+        ));
+        let (mut sim, mut win, mock) = fixture_with(params, (850.0, 300.0));
+
+        sim.handle(PointerEvent::Press, &mut win);
+        sim.handle(
+            PointerEvent::Release {
+                velocity: Vec2::new(3000.0, 0.0),
+            },
+            &mut win,
+        );
+
+        let mut landed = false;
+        for _ in 0..2400 {
+            sim.step(DT, &mut win, &backend(&mock));
+            if !sim.is_throwing() {
+                landed = true;
+                break;
+            }
+        }
+        assert!(landed, "40 秒内未着地");
+        let pos = sim.position();
+        assert_eq!(sim.active_domain(), 1, "应落入远端副屏域");
+        assert!(
+            pos.x >= 2600.0 && pos.x + 100.0 <= 3600.0,
+            "应在副屏内: {pos:?}"
+        );
+        assert!(
+            (pos.y + 80.0 - 800.0).abs() < 1e-2,
+            "应落在副屏地面: {pos:?}"
+        );
+    }
+
+    /// 空隙粘滞地面：窗口被甩入空隙且未飞出（低速下坠），域保持粘滞，
+    /// 沿用最后活动域的地面高度着地——不失去约束、不无限坠落。
+    #[test]
+    fn gap_residue_keeps_sticky_floor_when_dropped() {
+        let mut params = sim_params();
+        params.domains[0].size = Vec2::new(1000.0, 800.0);
+        params.domains[0].floor_y = 800.0;
+        params.domains.push(MonitorDomain::new(
+            Vec2::new(2600.0, 0.0),
+            Vec2::new(1000.0, 800.0),
+        ));
+        // 初位置完全落入空隙（1000..2600，与两域均零重叠 → 初始域 0），
+        // 竖直下抛：域粘滞主屏，沿用主屏地面 800 兜底着地（空隙内
+        // 「隐形地面」），不失去约束、不无限坠落。
+        let (mut sim, mut win, mock) = fixture_with(params, (1100.0, 100.0));
+
+        sim.handle(PointerEvent::Press, &mut win);
+        sim.handle(
+            PointerEvent::Release {
+                velocity: Vec2::new(0.0, 100.0),
+            },
+            &mut win,
+        );
+
+        let mut landed = false;
+        for _ in 0..2400 {
+            sim.step(DT, &mut win, &backend(&mock));
+            if !sim.is_throwing() {
+                landed = true;
+                break;
+            }
+        }
+        assert!(landed, "40 秒内未着地（粘滞地面应兜底）");
+        let pos = sim.position();
+        assert_eq!(sim.active_domain(), 0, "应粘滞主屏域");
+        assert!(
+            pos.x > 1000.0 && pos.x + 100.0 < 2600.0,
+            "仍在空隙内: {pos:?}"
+        );
+        assert!(
+            (pos.y + 80.0 - 800.0).abs() < 1e-2,
+            "应落在粘滞地面 800: {pos:?}"
+        );
+    }
+
+    /// 跨屏拖拽：拖到副屏后松手（近零速度），应按副屏域解算并落在
+    /// 副屏地面；拖拽期间窗口可自由到达副屏（全局坐标连续）。
+    #[test]
+    fn drag_across_boundary_releases_into_secondary_domain() {
+        let mut params = sim_params();
+        params.domains.push(MonitorDomain::new(
+            Vec2::new(1920.0, 0.0),
+            Vec2::new(1280.0, 720.0),
+        ));
+        let (mut sim, mut win, mock) = fixture_with(params, (800.0, 400.0));
+
+        sim.handle(PointerEvent::Press, &mut win);
+        sim.handle(
+            PointerEvent::Move {
+                x: 2400.0,
+                y: 300.0,
+            },
+            &mut win,
+        );
+        for _ in 0..60 {
+            sim.step(DT, &mut win, &backend(&mock));
+        }
+        assert_eq!(sim.active_domain(), 1, "拖拽中应已切到副屏域");
+        let pos = sim.position();
+        assert!((pos.x - 2400.0).abs() < 5.0 && (pos.y - 300.0).abs() < 5.0);
+
+        sim.handle(
+            PointerEvent::Release {
+                velocity: Vec2::new(0.0, 0.0),
+            },
+            &mut win,
+        );
+        let mut landed = false;
+        for _ in 0..1200 {
+            sim.step(DT, &mut win, &backend(&mock));
+            if !sim.is_throwing() {
+                landed = true;
+                break;
+            }
+        }
+        assert!(landed, "20 秒内未着地");
+        let pos = sim.position();
+        assert_eq!(sim.active_domain(), 1);
+        assert!(
+            (pos.y + 80.0 - 720.0).abs() < 1e-2,
+            "应落在副屏地面 720: {pos:?}"
+        );
+        assert!(
+            pos.x >= 1920.0 && pos.x + 100.0 <= 3200.0,
+            "应在副屏内: {pos:?}"
+        );
+    }
+
+    /// 初始域选择：初位置落在哪台显示器就取哪个域（无重叠取 0）。
+    #[test]
+    fn initial_domain_follows_start_position() {
+        let mut params = sim_params();
+        params.domains.push(MonitorDomain::new(
+            Vec2::new(1920.0, 0.0),
+            Vec2::new(1280.0, 720.0),
+        ));
+        let sim = PetSim::new(Vec2::new(2400.0, 100.0), params.clone());
+        assert_eq!(sim.active_domain(), 1, "初位置在副屏应取副屏域");
+        let sim = PetSim::new(Vec2::new(100.0, 100.0), params);
+        assert_eq!(sim.active_domain(), 0, "初位置在主屏应取主屏域");
+    }
+
     // ---- proptest 属性测试 ----
 
     proptest::proptest! {
@@ -459,7 +860,7 @@ mod tests {
             let shared = Box::new(SharedBackend(std::rc::Rc::clone(&mock)));
             let mut win = PetWindow::new(crate::window::PetWindowConfig::default(), shared);
             win.show().unwrap();
-            let mut sim = PetSim::new(Vec2::new(x, y), params);
+            let mut sim = PetSim::new(Vec2::new(x, y), params.clone());
             sim.handle(PointerEvent::Press, &mut win);
             sim.handle(PointerEvent::Release { velocity: Vec2::new(vx, vy) }, &mut win);
 
@@ -468,8 +869,8 @@ mod tests {
                 sim.step(DT, &mut win, &backend(&mock));
                 let p = sim.position();
                 proptest::prop_assert!(p.x.is_finite() && p.y.is_finite());
-                proptest::prop_assert!(p.x >= 0.0 && p.x + params.size.x <= params.screen.x);
-                proptest::prop_assert!(p.y + params.size.y <= params.floor_y + 1e-2);
+                proptest::prop_assert!(p.x >= 0.0 && p.x + params.size.x <= params.domains[0].size.x);
+                proptest::prop_assert!(p.y + params.size.y <= params.domains[0].floor_y + 1e-2);
                 if !sim.is_throwing() {
                     landed = true;
                     break;
@@ -479,7 +880,7 @@ mod tests {
             proptest::prop_assert_eq!(win.state(), WindowState::Visible);
             proptest::prop_assert_eq!(sim.velocity(), Vec2::zero());
             let p = sim.position();
-            proptest::prop_assert!((p.y + params.size.y - params.floor_y).abs() < 1e-2);
+            proptest::prop_assert!((p.y + params.size.y - params.domains[0].floor_y).abs() < 1e-2);
         }
     }
 }

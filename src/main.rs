@@ -9,10 +9,11 @@
 //!   （按需解码，素材缺失回退 Mock）；呈现节奏与像素绘制归 #24——Idle 下
 //!   不请求重绘属预期，帧动画节奏待 #24 接入。
 //!
-//! 坐标系约定：sim 与窗口位置统一使用**物理像素屏幕坐标**（与
-//! `WinitBackend::set_position` 语义一致）；`CursorMoved` 的窗口相对
-//! 坐标经 `outer_position` 换算为屏幕绝对坐标。多显示器按当前显示器
-//! 单屏约束（v1 限制，多屏遍历后续拆 issue）。
+//! 坐标系约定：sim 与窗口位置统一使用**物理像素全局坐标**（winit 虚拟
+//! 桌面坐标系，与 `WinitBackend::set_position` 语义一致）；`CursorMoved`
+//! 的窗口相对坐标经 `outer_position` 换算为屏幕绝对坐标。多显示器按
+//! 全部显示器几何分域约束（issue #35：跨屏拖拽/抛掷坐标连续，墙按
+//! 并集包络、地面按当前域）。
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -26,7 +27,7 @@ use dsh_pet_indesktop_rs::animation::{Frame, FrameSource, Playback};
 use dsh_pet_indesktop_rs::config::{self, SlotConfig};
 use dsh_pet_indesktop_rs::decode::{frame_source_from_assets, DecodeThread, DEFAULT_ASSETS_DIR};
 use dsh_pet_indesktop_rs::physics::{PhysicsParams, Vec2};
-use dsh_pet_indesktop_rs::sim::{PetSim, PointerEvent, SimParams};
+use dsh_pet_indesktop_rs::sim::{MonitorDomain, PetSim, PointerEvent, SimParams};
 use dsh_pet_indesktop_rs::window::winit_backend::{self, WinitBackend};
 use dsh_pet_indesktop_rs::window::{PetWindow, PetWindowConfig};
 
@@ -191,26 +192,32 @@ impl ApplicationHandler for PetApp {
         self.window = Some(pet);
         self.winit_window = Some(winit_window);
 
-        // ---- 模拟轨装配（#11/#23）----
-        // 形象尺寸 = 窗口外尺寸（物理像素）；屏幕几何 = 当前（或主）显示器
-        // 尺寸，按单屏约束（多屏遍历后续拆 issue）。
+        // ---- 模拟轨装配（#11/#23，多显示器分域 #35）----
+        // 形象尺寸 = 窗口外尺寸（物理像素）；约束域 = 全部显示器的
+        // 全局几何（`available_monitors`，winit 虚拟桌面坐标系）。
+        // 枚举为空（极少数平台）回退单屏 1080p（原单屏语义）。
         let outer_size = self
             .winit_window
             .as_ref()
             .map(|w| w.outer_size())
             .unwrap_or_default();
-        let monitor = self
-            .winit_window
-            .as_ref()
-            .and_then(|w| w.current_monitor().or_else(|| w.primary_monitor()));
-        let (screen, floor_y) = match monitor.as_ref() {
-            Some(m) => {
+        let mut domains: Vec<MonitorDomain> = event_loop
+            .available_monitors()
+            .map(|m| {
+                let p = m.position();
                 let s = m.size();
-                (Vec2::new(s.width as f32, s.height as f32), s.height as f32)
-            }
-            // 拿不到显示器信息（极少数平台）：保守默认 1080p
-            None => (Vec2::new(1920.0, 1080.0), 1080.0),
-        };
+                MonitorDomain::new(
+                    Vec2::new(p.x as f32, p.y as f32),
+                    Vec2::new(s.width as f32, s.height as f32),
+                )
+            })
+            .collect();
+        if domains.is_empty() {
+            domains.push(MonitorDomain::new(
+                Vec2::new(0.0, 0.0),
+                Vec2::new(1920.0, 1080.0),
+            ));
+        }
         let start = self
             .winit_window
             .as_ref()
@@ -222,8 +229,7 @@ impl ApplicationHandler for PetApp {
             SimParams {
                 physics: PhysicsParams::default(),
                 size: Vec2::new(outer_size.width as f32, outer_size.height as f32),
-                screen,
-                floor_y,
+                domains,
             },
         ));
 
