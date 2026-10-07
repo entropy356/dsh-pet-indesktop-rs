@@ -37,8 +37,10 @@
   - **执行端**：受限 fine-grained PAT，仅本仓库 Contents / Issues / PR
     三项 RW + Metadata 只读（规格与 age 交接流程见 agent-bootstrap
     `agent/README.md`）。
-- **planner 禁区**：不动执行端已领取的 issue；不直接写主仓库代码
-  （本文件 SPEC.md 的维护除外）。
+- **planner 禁区**：不动执行端已领取的 issue；不直接写主仓库代码——两个
+  例外，均为 planner 职责：本文件 SPEC.md 的维护；`main.rs` **跨轨集成
+  接线**（window / sim / animation 等多轨组件在入口的组装）。例外范围
+  仍走 PR + CI 门禁合并，不直推 main；组件内部实现归执行端。
 - **执行端禁区**：不写 planning-center（含 PROGRESS.md）——token 层面
   强制（该私有仓库不在执行端令牌范围内）。
 - **审计线**：planning-center 的 `PROGRESS.md`（只记决策、事故、规范
