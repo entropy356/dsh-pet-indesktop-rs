@@ -6,3 +6,8 @@ Cargo.lock
 # 角色素材本体与转换产物不入库（issue #14；MIT 音效见 issue #15 不受影响）
 assets/**/*.png
 assets/**/manifest.json
+
+# 离线依赖（本地生成，勿提交）
+vendor/
+.cargo/config.toml
+vendor.tar.xz
