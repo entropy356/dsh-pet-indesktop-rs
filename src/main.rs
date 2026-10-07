@@ -5,9 +5,9 @@
 //! - 模拟轨（#11/#23）：`PetSim` 拖拽 / 抛掷物理——指针事件翻译注入，
 //!   重绘帧步进；拖拽 / 抛掷期间由 sim 的下发链（`drag_to` /
 //!   `set_position` + `request_redraw`）自持重绘循环；
-//! - 帧轨（#10/#21）：`Playback` + `FrameFanout` 契约通道（占位帧源；
-//!   真实解码归 #12、呈现节奏与像素绘制归 #24——Idle 下不请求重绘属
-//!   预期，帧动画节奏待 #24 接入）。
+//! - 帧轨（#10/#12）：独立解码线程驱动 `Playback::tick`——PNG 序列帧解码器
+//!   （按需解码，素材缺失回退 Mock）；呈现节奏与像素绘制归 #24——Idle 下
+//!   不请求重绘属预期，帧动画节奏待 #24 接入。
 //!
 //! 坐标系约定：sim 与窗口位置统一使用**物理像素屏幕坐标**（与
 //! `WinitBackend::set_position` 语义一致）；`CursorMoved` 的窗口相对
@@ -22,18 +22,25 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-use dsh_pet_indesktop_rs::animation::{Frame, MockFrameSource, MonotonicClock, Playback};
+use dsh_pet_indesktop_rs::animation::{Frame, FrameSource, Playback};
 use dsh_pet_indesktop_rs::config::{self, SlotConfig};
+use dsh_pet_indesktop_rs::decode::{frame_source_from_assets, DecodeThread, DEFAULT_ASSETS_DIR};
 use dsh_pet_indesktop_rs::physics::{PhysicsParams, Vec2};
 use dsh_pet_indesktop_rs::sim::{PetSim, PointerEvent, SimParams};
 use dsh_pet_indesktop_rs::window::winit_backend::{self, WinitBackend};
 use dsh_pet_indesktop_rs::window::{PetWindow, PetWindowConfig};
 
-/// 事件循环宿主状态：窗口、播放管线与模拟器的所有权都在这里。
+/// 解码线程 tick 周期（#10 契约：独立线程驱动 `Playback::tick`）。
+/// 30Hz 驱动上限，实际呈现节奏由 fps 与 RedrawRequested 决定（#24）。
+const DECODE_TICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33);
+
+/// 事件循环宿主状态：窗口、解码线程与模拟器的所有权都在这里。
 struct PetApp {
     config: SlotConfig,
-    playback: Playback<MockFrameSource>,
-    clock: MonotonicClock,
+    /// 帧源（真实解码器或 Mock 回退）：`resumed` 装配进解码线程后为 None。
+    frame_source: Option<Box<dyn FrameSource + Send>>,
+    /// 解码/推进线程（#12）：独立驱动 `Playback::tick`，关闭时优雅退出。
+    decode_thread: Option<DecodeThread>,
     window_rx: Option<std::sync::mpsc::Receiver<Frame>>,
     window: Option<PetWindow>,
     window_id: Option<WindowId>,
@@ -131,11 +138,16 @@ impl PointerTracker {
 
 impl PetApp {
     fn new(config: SlotConfig) -> Self {
-        // 占位帧源：真实解码链（#12）接入后替换。
+        // 帧源（#12）：`assets/<config.character>/` 扫描加载真实解码器；
+        // 素材缺失/损坏时回退 Mock 并日志提示（见 decode 模块文档）。
+        let frame_source = Some(frame_source_from_assets(
+            std::path::Path::new(DEFAULT_ASSETS_DIR),
+            &config.character,
+        ));
         Self {
             config,
-            playback: Playback::new(MockFrameSource::new(Vec::new())),
-            clock: MonotonicClock::new(),
+            frame_source,
+            decode_thread: None,
             window_rx: None,
             window: None,
             window_id: None,
@@ -215,7 +227,15 @@ impl ApplicationHandler for PetApp {
             },
         ));
 
-        self.window_rx = Some(self.playback.fanout().subscribe());
+        // ---- 帧轨装配（#12）：独立解码线程驱动 Playback::tick（#10 契约
+        // 第 4 点），winit 侧仅消费通道——先订阅再移交 playback 所有权。
+        let mut playback = Playback::new(
+            self.frame_source
+                .take()
+                .expect("frame_source 仅在 resumed 装配一次"),
+        );
+        self.window_rx = Some(playback.fanout().subscribe());
+        self.decode_thread = Some(DecodeThread::spawn(playback, DECODE_TICK_INTERVAL));
         self.request_redraw();
     }
 
@@ -283,14 +303,14 @@ impl ApplicationHandler for PetApp {
                     self.request_redraw();
                 }
             }
-            // ---- 帧轨占位 + 模拟轨步进 ----
+            // ---- 帧轨消费 + 模拟轨步进（tick 由解码线程驱动，#12）----
             WindowEvent::RedrawRequested => {
                 let dt = self
                     .last_step
                     .replace(Instant::now())
                     .map(|t| t.elapsed().as_secs_f32())
                     .unwrap_or(0.0);
-                let _ = self.playback.tick(&self.clock);
+                // 只追最新帧接收端语义：取帧时排空、只留最新（#10 契约）。
                 if let Some(rx) = &self.window_rx {
                     while let Ok(_frame) = rx.try_recv() {}
                 }
@@ -300,7 +320,13 @@ impl ApplicationHandler for PetApp {
                     sim.step(dt, win, backend);
                 }
             }
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                // 解码线程优雅退出（#12 验收）：置停止位 + join。
+                if let Some(thread) = self.decode_thread.take() {
+                    let _ = thread.stop();
+                }
+                event_loop.exit();
+            }
             _ => {}
         }
     }
