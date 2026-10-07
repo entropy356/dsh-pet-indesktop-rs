@@ -1,8 +1,9 @@
 # Third-Party Software Notices and Information
 
-本仓库（Rust 重构）当前仅含代码，未携带任何素材。第二阶段起引入素材时，
-授权沿用原项目 [MerZlin/dsh-pet-indesktop](https://github.com/MerZlin/dsh-pet-indesktop)
-的 THIRD_PARTY_NOTICES.md 约定，届时同步更新本文件。
+本仓库随源码分发 MIT 音效素材（见第 2 节）；角色动画素材**不入库**，
+由用户按 README 素材说明自行放置，授权沿用原项目
+[MerZlin/dsh-pet-indesktop](https://github.com/MerZlin/dsh-pet-indesktop)
+的 THIRD_PARTY_NOTICES.md 约定。
 
 预先声明（与原项目一致）：
 
@@ -18,8 +19,11 @@
 
 ## 2. 声音素材（duck 音效）
 
+- **文件**：`assets/sounds/duck/Ya1.mp3`、`assets/sounds/duck/Ya2.mp3`
+  （源自来源仓库 `assets/Ya1.mp3`、`assets/Ya2.mp3`，原样拷贝，未转码）
 - **来源**：[MeteorNOX/DeepSeek-Balance-Whale-Widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget)
-- **授权**：MIT License（Copyright (c) 2025 MeteorNOX）
+- **授权**：MIT License（Copyright (c) 2025 MeteorNOX），
+  见来源仓库 [LICENSE](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget/blob/main/LICENSE)
 
 ---
 
