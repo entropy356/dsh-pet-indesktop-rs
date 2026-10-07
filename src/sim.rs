@@ -126,6 +126,10 @@ impl PetSim {
         match (self.phase, event) {
             (Phase::Idle, PointerEvent::Press) => {
                 if win.press().is_ok() {
+                    // 指针限制随转移成败同步（issue #36）：限住后即使指针
+                    // 高速移动脱离窗口，事件仍持续送达（平台差异见
+                    // WinitBackend::set_cursor_confined 文档）。
+                    win.set_cursor_confined(true);
                     self.velocity = Vec2::zero();
                     self.phase = Phase::Dragging {
                         target: self.position,
@@ -141,6 +145,7 @@ impl PetSim {
                 if win.release_with_velocity().is_ok() =>
             {
                 // 窗口转移成功才进入 Throwing；抛掷速度按上限封顶（保方向）
+                win.set_cursor_confined(false);
                 self.velocity = throw_velocity(velocity, self.params.physics.max_throw_speed);
                 self.phase = Phase::Throwing;
             }
@@ -250,6 +255,9 @@ mod tests {
         }
         fn request_redraw(&self) {
             self.0.request_redraw();
+        }
+        fn set_cursor_confined(&self, on: bool) {
+            self.0.set_cursor_confined(on);
         }
     }
 
@@ -438,8 +446,66 @@ mod tests {
         sim.handle(PointerEvent::Press, &mut win);
         assert!(sim.is_throwing());
         assert_eq!(win.state(), WindowState::Thrown);
-        // 期间窗口/后端无额外调用（除 fixture 的 show()）
-        assert_eq!(mock.calls(), ["show()"]);
+        // 期间窗口/后端无额外调用（除 fixture 的 show() 与合法拖拽
+        // 生命周期的指针限制开关：Press 限住 → Release 解除，#36）
+        assert_eq!(
+            mock.calls(),
+            [
+                "show()",
+                "set_cursor_confined(true)",
+                "set_cursor_confined(false)"
+            ]
+        );
+    }
+
+    /// 拖拽生命周期与指针限制开关联动（issue #36）：Idle→Dragging 限住、
+    /// Dragging→Throwing 解除、着地后再次拖拽重新限住——开关严格随窗口
+    /// 转移成败，步进期间不得反复切换。
+    #[test]
+    fn cursor_confinement_follows_drag_lifecycle() {
+        let (mut sim, mut win, mock) = fixture((800.0, 400.0));
+
+        // 进入拖拽：立即限住
+        sim.handle(PointerEvent::Press, &mut win);
+        assert!(sim.is_dragging());
+        assert_eq!(
+            mock.calls(),
+            ["show()", "set_cursor_confined(true)"],
+            "进入拖拽必须限住指针"
+        );
+
+        // 拖拽步进（Move + 弹簧跟随）期间不反复开关
+        let n0 = mock.calls().len();
+        sim.handle(PointerEvent::Move { x: 900.0, y: 200.0 }, &mut win);
+        sim.step(DT, &mut win, &backend(&mock));
+        for call in &mock.calls()[n0..] {
+            assert!(
+                !call.starts_with("set_cursor_confined"),
+                "步进中不应切换指针限制: {call}"
+            );
+        }
+
+        // 松手抛掷：解除
+        sim.handle(
+            PointerEvent::Release {
+                velocity: Vec2::new(0.0, 0.0),
+            },
+            &mut win,
+        );
+        assert!(sim.is_throwing());
+        assert_eq!(mock.calls().last().unwrap(), "set_cursor_confined(false)");
+
+        // 着地回 Visible，再次按下：重新限住（生命周期可重复）
+        for _ in 0..3600 {
+            sim.step(DT, &mut win, &backend(&mock));
+            if !sim.is_throwing() {
+                break;
+            }
+        }
+        assert_eq!(win.state(), WindowState::Visible);
+        sim.handle(PointerEvent::Press, &mut win);
+        assert!(sim.is_dragging());
+        assert_eq!(mock.calls().last().unwrap(), "set_cursor_confined(true)");
     }
 
     // ---- proptest 属性测试 ----

@@ -115,6 +115,15 @@ impl PetWindow {
         Ok(())
     }
 
+    /// 拖拽期指针限制开关（issue #36）：委托给后端的 best-effort 能力。
+    ///
+    /// 与状态机解耦——不校验当前状态、不产生转移；生命周期（进拖拽
+    /// 限住 / 拖拽结束解除）由模拟轨 [`crate::sim::PetSim`] 按转移成败
+    /// 驱动。不支持的平台/后端静默忽略（trait 默认空实现）。
+    pub fn set_cursor_confined(&self, on: bool) {
+        self.backend.set_cursor_confined(on);
+    }
+
     /// 统一走转移表 + 后端同步的简单事件。
     fn apply(&mut self, event: WindowEvent) -> Result<(), TransitionError> {
         self.state = state::transition(self.state, event)?;
