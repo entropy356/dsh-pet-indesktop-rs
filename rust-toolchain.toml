@@ -1,0 +1,9 @@
+# 工具链钉死（与 .github/workflows/ci.yml 的 dtolnay/rust-toolchain 输入一致）。
+# 目的：
+#   1. SPEC §1.6 定 CI 为机械事实源——门禁版本不能是移动目标（@stable 漂移）；
+#   2. 各克隆体本地 rustup 读到本文件自动对齐 CI 版本，免去手动装版对齐
+#      （见 planning-center PROGRESS 序 17：p2 曾为此装 1.99.0 便携工具链）。
+# 升级流程：改本文件 + ci.yml 两处一起提 PR，双平台 CI 绿后合并。
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
