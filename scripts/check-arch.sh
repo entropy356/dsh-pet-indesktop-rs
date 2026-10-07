@@ -17,6 +17,7 @@ PURE_MODULES=(
   "src/physics.rs"
   "src/animation.rs"
   "src/config.rs"
+  "src/sim.rs"
 )
 
 GUI_PATTERNS='winit|wgpu|softbuffer|tray_icon'

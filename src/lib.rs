@@ -8,6 +8,7 @@
 //! - [`window`]：桌宠窗口（透明、置顶、拖动、多窗）
 //! - [`animation`]：动画播放（解码链 + 帧调度）
 //! - [`physics`]：纯物理/碰撞逻辑层（不依赖 GUI）
+//! - [`sim`]：模拟控制器（窗口状态机 × 物理步进的纯逻辑接线，issue #11）
 //! - [`tray`]：系统托盘与右键菜单
 //! - [`config`]：配置加载/保存与多开 slot 作用域
 //!
@@ -16,5 +17,6 @@
 pub mod animation;
 pub mod config;
 pub mod physics;
+pub mod sim;
 pub mod tray;
 pub mod window;
