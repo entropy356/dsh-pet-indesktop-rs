@@ -163,8 +163,8 @@ impl Clock for VirtualClock {
 
 /// 解码链抽象：帧调度的数据来源。
 ///
-/// 第二阶段的真实解码器（ffmpeg-next / 平台原生）实现此 trait 后注入
-/// [`Playback`]；测试用 [`MockFrameSource`]。实现方不得持有窗口句柄
+/// 第二阶段的真实解码器实现此 trait 后注入 [`Playback`]；测试用
+/// [`MockFrameSource`]。实现方不得持有窗口句柄
 /// （架构红线：窗口只能通过 [`FrameFanout`] 通道接收帧）。
 pub trait FrameSource {
     /// 由注入时钟驱动，产出当前应显示的一帧。
@@ -175,6 +175,22 @@ pub trait FrameSource {
 
     /// 片段帧率（fps）。
     fn fps(&self) -> f64;
+}
+
+/// `Box<F>` 转发：解码线程侧需要 `Box<dyn FrameSource + Send>` 这类
+/// trait object 拥有者（issue #12 接线用）。
+impl<F: FrameSource + ?Sized> FrameSource for Box<F> {
+    fn next_frame(&mut self, clock: &dyn Clock) -> Frame {
+        (**self).next_frame(clock)
+    }
+
+    fn frame_count(&self) -> u32 {
+        (**self).frame_count()
+    }
+
+    fn fps(&self) -> f64 {
+        (**self).fps()
+    }
 }
 
 /// 动画片段：按帧率把播放时长换算为帧序号。

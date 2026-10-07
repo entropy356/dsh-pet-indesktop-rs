@@ -16,6 +16,7 @@
 
 pub mod animation;
 pub mod config;
+pub mod decode;
 pub mod physics;
 pub mod sim;
 pub mod tray;
