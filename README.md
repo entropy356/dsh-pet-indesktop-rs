@@ -50,6 +50,51 @@ cargo fmt --check  # 格式检查
 bash scripts/check-arch.sh                   # 架构红线检查（CI 同款）
 ```
 
+## 素材（issue #14 约定，#12 加载器的约定来源）
+
+角色素材**不入库**：用户自行从原项目获取 webm，用转换脚本生成本仓库运行时
+所需的 PNG 序列帧。
+
+### 目录约定
+
+```
+assets/<角色>/<行为分类>/<片段>/NNNN.png + manifest.json
+```
+
+- `<角色>` 与 config 的 `character` 字段对齐（默认 `shenshen`）；
+- `<片段>` = 原项目 videos 下每个 webm 文件（去扩展名）；行为分类目录层级
+  原样保留（如 `click`、`events/balance`）；
+- 帧名 `0000.png` 起零填充 4 位递增，**断号视为损坏**；
+- `manifest.json`（由转换脚本经 ffprobe 生成，全字段必选）：
+
+  ```json
+  { "version": 1, "fps": 24, "frame_count": 241, "width": 640, "height": 360 }
+  ```
+
+- **回退行为**：manifest 缺失/损坏/断号时，#12 加载器回退 `MockFrameSource`
+  并日志提示，不 panic；
+- 加载器按「含 `manifest.json` 的目录 = 一个可播放片段」递归扫描；
+  行为分类取该目录相对路径的父级。
+
+### 转换脚本
+
+```bash
+# 完整转换（默认输出 ./assets/，帧率上限 24fps，保持原分辨率）
+python3 scripts/convert_assets.py --src <原项目>/assets/characters/shenshen/videos
+
+# 只转 idle 分类，帧率压到 12fps，缩放到 300x300
+python3 scripts/convert_assets.py --src .../videos --include idle --fps-cap 12 --size 300x300
+```
+
+Python 3 标准库 + 系统 ffmpeg/ffprobe，零 pip 依赖；`--help` 自说明。
+`assets/**/*.png` 与 `assets/**/manifest.json` 已在 `.gitignore` 中，素材
+本体与生成物不进仓库。
+
+### 授权
+
+角色素材为同人作品（CC BY-NC-SA 类，**仅限个人非商业使用**，须保留署名与
+来源），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
 ## 许可证
 
 代码：[MIT](LICENSE)（原项目 MerZlin/dsh-pet-indesktop 亦为 MIT，版权行已保留）。

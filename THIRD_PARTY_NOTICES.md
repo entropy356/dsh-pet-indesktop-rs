@@ -1,8 +1,10 @@
 # Third-Party Software Notices and Information
 
-本仓库（Rust 重构）当前仅含代码，未携带任何素材。第二阶段起引入素材时，
-授权沿用原项目 [MerZlin/dsh-pet-indesktop](https://github.com/MerZlin/dsh-pet-indesktop)
-的 THIRD_PARTY_NOTICES.md 约定，届时同步更新本文件。
+本仓库**不携带任何素材本体**：角色素材由用户自行获取并经
+`scripts/convert_assets.py`（issue #14）转换为 PNG 序列帧后放置到本地
+`assets/` 目录（该路径已加入 `.gitignore`）。素材授权沿用原项目
+[MerZlin/dsh-pet-indesktop](https://github.com/MerZlin/dsh-pet-indesktop)
+的 THIRD_PARTY_NOTICES.md 约定。
 
 预先声明（与原项目一致）：
 
